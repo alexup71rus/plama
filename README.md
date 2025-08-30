@@ -33,7 +33,6 @@ Download and configure via Ollama:
 
 1. **Any general model**
 2. **RAG model** (used for document-based retrieval and memory)
-3. **Image generation model**
 
 ### 🌐 Optional: SearXNG Search Engine
 
