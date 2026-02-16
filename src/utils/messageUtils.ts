@@ -8,8 +8,6 @@ export function buildOllamaRequestBody (
   finalContent: string,
   attachmentContent: Attachment | null | undefined,
   memoryContent: string | null | undefined,
-  tempMessages: { role: 'system'; content: string }[],
-  isSearchActive: boolean,
   settings: ISettings
 ) {
   const hasAttachment = !!(attachmentContent && Object.keys(attachmentContent).length);
@@ -27,7 +25,7 @@ export function buildOllamaRequestBody (
   }
 
   const maxMessages = settings.maxMessages || 20;
-  const reservedSlots = (chat.systemPrompt?.content || memoryContent ? 1 : 0) + tempMessages.length + 1;
+  const reservedSlots = (chat.systemPrompt?.content || memoryContent ? 1 : 0) + 1;
   const availableSlots = Math.max(0, maxMessages - reservedSlots);
 
   if (hasAttachment && attachmentContent!.type === AttachmentType.IMAGE) {
@@ -70,10 +68,6 @@ export function buildOllamaRequestBody (
     }));
 
   messages.push(...filteredMessages);
-
-  if (tempMessages.length) {
-    messages.push(...tempMessages);
-  }
   messages.push({
     role: 'user',
     content: finalContent || '',

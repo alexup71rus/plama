@@ -6,16 +6,15 @@ import { graphqlUploadExpress } from 'graphql-upload-ts';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { IncomingMessage, ServerResponse } from 'http';
 import { SettingsService } from './settings/settings.service';
+import { ensureDataDir } from './common/data-dir';
+
+const OLLAMA_PROXY_TIMEOUT_MS = parseInt(
+  process.env.OLLAMA_PROXY_TIMEOUT_MS || '8000',
+  10,
+);
 
 async function bootstrap() {
-  const isElectron = process.versions.electron !== undefined;
-  let basePath: string;
-  try {
-    const { app } = await import('electron');
-    basePath = isElectron ? app.getPath('userData') : process.cwd();
-  } catch {
-    basePath = process.cwd();
-  }
+  const basePath = ensureDataDir();
 
   const nestApp = await NestFactory.create<NestExpressApplication>(AppModule);
   const settingsService = nestApp.get(SettingsService);
@@ -57,11 +56,54 @@ async function bootstrap() {
         return;
       }
 
+      let activeProxyReq: any | null = null;
+      let timeoutFired = false;
+
+      const deadline = setTimeout(() => {
+        timeoutFired = true;
+        try {
+          if (!res.headersSent) {
+            res
+              .writeHead(504, {
+                'Content-Type': 'text/plain; charset=utf-8',
+              })
+              .end(`Ollama proxy timeout (${OLLAMA_PROXY_TIMEOUT_MS}ms)`);
+          } else {
+            res.end();
+          }
+        } catch {
+          // ignore
+        }
+
+        try {
+          activeProxyReq?.destroy?.(new Error('ETIMEDOUT'));
+        } catch {
+          // ignore
+        }
+      }, OLLAMA_PROXY_TIMEOUT_MS);
+
+      const clearDeadline = () => clearTimeout(deadline);
+      res.once('close', clearDeadline);
+      res.once('finish', clearDeadline);
+
       const proxy = createProxyMiddleware({
         target: ollamaUrl,
         changeOrigin: true,
+        timeout: OLLAMA_PROXY_TIMEOUT_MS,
+        proxyTimeout: OLLAMA_PROXY_TIMEOUT_MS,
         pathRewrite: (path) => `/api${path.replace(/^\/api/, '')}`,
         on: {
+          proxyReq: (proxyReq) => {
+            activeProxyReq = proxyReq;
+            try {
+              proxyReq.setTimeout(OLLAMA_PROXY_TIMEOUT_MS);
+              proxyReq.on('timeout', () => {
+                proxyReq.destroy(new Error('ETIMEDOUT'));
+              });
+            } catch {
+              // ignore
+            }
+          },
           proxyRes: (proxyRes, req) => {
             const origin =
               req.headers.origin && allowedOrigins.includes(req.headers.origin)
@@ -74,11 +116,32 @@ async function bootstrap() {
             delete proxyRes.headers['access-control-allow-origin'];
           },
           error: (err, _req, res: ServerResponse) => {
-            res.writeHead(500).end('Proxy error');
+            if (res.headersSent) {
+              res.end();
+              return;
+            }
+
+            const code = (err as any)?.code as string | undefined;
+            const status =
+              code === 'ETIMEDOUT' || code === 'ECONNREFUSED' ? 504 : 502;
+            const message =
+              status === 504
+                ? `Ollama proxy timeout (${OLLAMA_PROXY_TIMEOUT_MS}ms)`
+                : 'Ollama proxy error';
+
+            res
+              .writeHead(status, {
+                'Content-Type': 'text/plain; charset=utf-8',
+              })
+              .end(message);
           },
         },
       });
 
+      if (timeoutFired) {
+        clearDeadline();
+        return;
+      }
       proxy(req, res, next);
     },
   );

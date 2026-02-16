@@ -360,6 +360,27 @@ export const useChatStore = defineStore('chat', {
         let linkContent: { urls: string[]; content?: string; error?: string } | null = null;
         let textFileContent: { content: string; meta: { name: string; size: number } } | null = null;
         const hasAttachment = !!(attachmentContent && Object.keys(attachmentContent).length);
+        let generatedSearchQuery: string | null = null;
+
+        const escapeHtml = (value: string): string =>
+          value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
+        const truncateText = (value: string, maxChars: number): string => {
+          if (!value) return '';
+          if (value.length <= maxChars) return value;
+          return value.slice(0, Math.max(0, maxChars - 1)) + '…';
+        };
+
+        const toDetailsBlock = (title: string, body: string): string => {
+          const safeTitle = escapeHtml(title);
+          const safeBody = escapeHtml(body);
+          return `<details class="internal-context"><summary>${safeTitle}</summary><pre>${safeBody}</pre></details>`;
+        };
 
         const urls = extractLinks(finalContent);
         if (urls?.length) {
@@ -392,11 +413,11 @@ export const useChatStore = defineStore('chat', {
               },
             });
 
-            const searchQuery = searchQueryResponse?.message?.content?.trim();
-            if (!searchQuery) throw new Error('Failed to generate search query');
+            generatedSearchQuery = searchQueryResponse?.message?.content?.trim() ?? null;
+            if (!generatedSearchQuery) throw new Error('Failed to generate search query');
 
             searchResults = await searchBackend(
-              searchQuery,
+              generatedSearchQuery,
               this.settings.searxngURL,
               this.settings.searchFormat,
               {
@@ -423,9 +444,50 @@ export const useChatStore = defineStore('chat', {
             .join('\n\n');
         }
 
+        // Build context blocks:
+        // - UI: collapsible <details> blocks
+        // - Model: plain text appended to current user message (keeps roles alternating)
+        let contextForUi = '';
+        let contextForModel = '';
+
+        if (hasAttachment && attachmentContent?.content && attachmentContent?.meta?.name && attachmentContent.type === AttachmentType.TEXT) {
+          textFileContent = { content: attachmentContent.content, meta: { name: attachmentContent.meta.name, size: attachmentContent.meta.size } };
+          const title = `Вложение: ${textFileContent.meta.name} (${formatFileSize(textFileContent.meta.size)})`;
+          const body = truncateText(textFileContent.content, 3000);
+          contextForUi += `\n\n${toDetailsBlock(title, body)}`;
+          contextForModel += `\n\n[Attachment]\nName: ${textFileContent.meta.name}\nSize: ${formatFileSize(textFileContent.meta.size)}\n${body}`;
+        }
+
+        if (this.isSearchActive && searchResults?.length) {
+          // searchBackend already returns bounded results; still keep a conservative cap.
+          const raw = JSON.stringify(searchResults, null, 2);
+          const body = truncateText(raw, 6000);
+          const title = `Поиск по запросу: ${truncateText(generatedSearchQuery || finalContent.trim(), 80)}`;
+          contextForUi += `\n\n${toDetailsBlock(title, body)}`;
+          contextForModel += `\n\n[Search Results]\n${body}`;
+        }
+
+        if (linkContent) {
+          const raw = JSON.stringify({ content: linkContent.content ?? {}, error: linkContent.error ?? null }, null, 2);
+          const body = truncateText(raw, 6000);
+          const title = `Ссылки (${linkContent.urls.length})`;
+          contextForUi += `\n\n${toDetailsBlock(title, body)}`;
+          contextForModel += `\n\n[Link Content]\n${body}`;
+        }
+
+        if (ragContext) {
+          const body = truncateText(ragContext, 6000);
+          const title = 'RAG';
+          contextForUi += `\n\n${toDetailsBlock(title, body)}`;
+          contextForModel += `\n\n[RAG Context]\n${body}`;
+        }
+
+        const finalContentForUi = (finalContent + contextForUi).trim();
+        const finalContentForModel = (finalContent + contextForModel).trim();
+
         userMessageId = await this.addMessage(chatId, {
           role: 'user',
-          content: finalContent,
+          content: finalContentForUi,
           timestamp: Date.now(),
           attachmentContent: attachmentContent?.content || null,
           attachmentMeta: attachmentContent?.meta ? {
@@ -444,50 +506,13 @@ export const useChatStore = defineStore('chat', {
         await this.persistChatMeta({ id: chatId, timestamp: chat.timestamp });
         await this.syncActiveChat();
 
-        const tempMessages: { role: 'system'; content: string }[] = [];
-
-        if (hasAttachment && attachmentContent?.content && attachmentContent?.meta?.name && attachmentContent.type === AttachmentType.TEXT) {
-          textFileContent = { content: attachmentContent.content, meta: { name: attachmentContent.meta.name, size: attachmentContent.meta.size } };
-          tempMessages.push({
-            role: 'system',
-            content: `[Attached: ${textFileContent.meta.name} [${formatFileSize(textFileContent.meta.size)}]]\n${textFileContent.content}`,
-          });
-        }
-
-        if (this.isSearchActive && searchResults?.length) {
-          tempMessages.push({
-            role: 'system',
-            content: `[Search Results: ${JSON.stringify(searchResults)}]`,
-          });
-        }
-
-        if (linkContent) {
-          let linkMessage = `[Link Content: ${JSON.stringify(linkContent.content ?? {})}]`;
-          if (linkContent.error) {
-            linkMessage += `\n[Link Content Error: ${linkContent.error}]`;
-          }
-          tempMessages.push({
-            role: 'system',
-            content: linkMessage,
-          });
-        }
-
-        if (ragContext) {
-          tempMessages.push({
-            role: 'system',
-            content: `[RAG Context]\n${ragContext}`,
-          });
-        }
-
         const { body, images } = buildOllamaRequestBody(
           chat,
           this.selectedModel,
           userMessageId,
-          finalContent,
+          finalContentForModel,
           attachmentContent,
           this.memory.getMemoryContent,
-          tempMessages,
-          this.isSearchActive,
           this.settings
         );
 
@@ -502,9 +527,31 @@ export const useChatStore = defineStore('chat', {
 
         let thinkStartTime: number | null = null;
         let isInThinkBlock = false;
+        let thinkTagBuffer = '';
         let assistantMessageId: string | null = null;
         let assistantContent = '';
         let thinkTimeInterval: number | null = null;
+
+        const THINK_OPEN_TAGS = ['<think>', '<analysis>'];
+        const THINK_CLOSE_TAGS = ['</think>', '</analysis>'];
+
+        const updateThinkStateFromChunk = (chunk: string) => {
+          // Tags can be split across streamed chunks; keep a small rolling buffer.
+          thinkTagBuffer = (thinkTagBuffer + chunk).slice(-64);
+
+          const combined = thinkTagBuffer;
+          if (!isInThinkBlock && THINK_OPEN_TAGS.some(t => combined.includes(t))) {
+            thinkStartTime = Date.now();
+            isInThinkBlock = true;
+            startThinkTimeUpdates();
+          }
+
+          if (isInThinkBlock && THINK_CLOSE_TAGS.some(t => combined.includes(t))) {
+            isInThinkBlock = false;
+            if (thinkTimeInterval) clearInterval(thinkTimeInterval);
+            thinkTimeInterval = null;
+          }
+        };
 
         const startThinkTimeUpdates = () => {
           if (thinkTimeInterval) clearInterval(thinkTimeInterval);
@@ -528,17 +575,7 @@ export const useChatStore = defineStore('chat', {
           const chunkContent = hasAttachment && attachmentContent?.type === AttachmentType.IMAGE ? data.response : data.message?.content;
           if (!chunkContent) return;
 
-          if (chunkContent.includes('<think>') && !isInThinkBlock) {
-            thinkStartTime = Date.now();
-            isInThinkBlock = true;
-            startThinkTimeUpdates();
-          }
-
-          if (chunkContent.includes('</think>') && isInThinkBlock) {
-            isInThinkBlock = false;
-            if (thinkTimeInterval) clearInterval(thinkTimeInterval);
-            thinkTimeInterval = null;
-          }
+          updateThinkStateFromChunk(chunkContent);
 
           assistantMessageId ??= await this.addMessage(chatId, {
             role: 'assistant',

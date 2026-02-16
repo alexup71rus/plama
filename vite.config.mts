@@ -45,8 +45,9 @@ export default defineConfig({
     csp({
       policies: {
         'default-src': ["'self'"],
-        'connect-src': ["'self'", 'http://localhost:3001'],
-        'font-src': ["'self'"],
+        'connect-src': ["'self'", 'http://localhost:3001', 'ws://localhost:3001', 'ws://localhost:3002'],
+        'font-src': ["'self'", 'data:'],
+        'img-src': ["'self'", 'data:', 'blob:'],
         'script-src': ["'self'"],
         'style-src': ["'self'", "'unsafe-inline'"],
       },

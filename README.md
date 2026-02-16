@@ -23,9 +23,10 @@
 
 ### 🚀 In Development
 
-* 🗋 Better support for various document formats in RAG
-* 🎤 Voice chat support
-* 🚀 Support for third-party API tools
+* 📋 Better support for various document formats in RAG
+* 🎙️ Voice chat support
+* 🚀 Support for third-party API tools (agent/tool calling)
+* 🧩 MCP servers support (bring-your-own tools)
 
 ### ⚙️ Required Models
 
@@ -82,10 +83,24 @@ pnpm dev:electron
 
 ### 🌐 Roadmap
 
-* 🔍 Better local document indexing and RAG refinement
-* 🎤 Optional voice input/output (speech-to-text + TTS)
-* ⚖️ API integration support (external tools or agents)
-* 🌍 Interface multilingual support
+* 🧠 Agent mode (2026)
+  * Tool-calling workflow (search, RAG, link fetch, tasks) with structured tool schemas
+  * Better “thinking” formats support (e.g. `<think>…</think>`, `<analysis>…</analysis>`, streaming-safe)
+  * Guardrails: tool permissioning, rate limits, and clear UI for tool traces
+* 🧩 MCP servers integration
+  * Connect to one or more MCP servers (stdio / HTTP) and expose their tools to the agent
+  * Per-server auth + environment variables, and allow/deny list per tool
+  * Tool discovery + versioning + health checks
+* 🔍 RAG & indexing
+  * Better local document indexing and retrieval quality
+  * More formats: PDF/DOCX/MD, and chunking strategies per file type
+* 🎤 Voice
+  * Optional voice input/output (STT + TTS)
+* 🌍 UX
+  * Interface multilingual support
+* 🧰 Maintenance
+  * Migrate deprecated packages (e.g. `apollo-server-express`) to maintained alternatives
+  * Planned major upgrades (needs migration work): Vite 7, Vue Router 5, Electron 40, Puppeteer 24, Marked 17, ESLint 10
 
 ### 📄 License
 

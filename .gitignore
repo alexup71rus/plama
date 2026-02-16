@@ -3,6 +3,9 @@ node_modules
 /dist
 /dist_electron
 
+# Intermediate icon build artifacts
+/electron/AppIcon.iconset
+
 # local env files
 .env.local
 .env.*.local

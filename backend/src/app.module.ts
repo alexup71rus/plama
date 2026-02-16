@@ -15,15 +15,9 @@ import { RagModule } from './rag/rag.module';
 import { SettingsModule } from './settings/settings.module';
 import { EventsModule } from './event/events.module';
 
-const isElectron = process.versions.electron !== undefined;
-const basePath: string = (() => {
-  try {
-    const { app } = require('electron');
-    return isElectron ? app.getPath('userData') : process.cwd();
-  } catch {
-    return process.cwd();
-  }
-})();
+import { ensureDataDir } from './common/data-dir';
+
+const basePath = ensureDataDir();
 
 @Module({
   imports: [

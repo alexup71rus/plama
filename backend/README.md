@@ -31,6 +31,16 @@
 $ pnpm install
 ```
 
+## Data directory
+
+Backend stores its local data (SQLite `db.sqlite`, generated `schema.gql`, and uploaded files) in an OS-specific application data directory by default:
+
+- macOS: `~/Library/Application Support/Plama`
+- Linux: `~/.config/Plama` (or `$XDG_CONFIG_HOME/Plama`)
+- Windows: `%APPDATA%\\Plama`
+
+To override the location, set `PLAMA_DATA_DIR`.
+
 ## Compile and run the project
 
 ```bash

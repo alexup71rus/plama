@@ -276,6 +276,28 @@ const props = defineProps<{
     white-space: pre-wrap;
   }
 
+  ::v-deep(details.internal-context) {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.03);
+  }
+
+  ::v-deep(details.internal-context > summary) {
+    cursor: pointer;
+    font-weight: 600;
+    user-select: none;
+  }
+
+  ::v-deep(details.internal-context > pre) {
+    margin-top: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
   .attachments-scroll {
     display: flex;
     gap: 8px;

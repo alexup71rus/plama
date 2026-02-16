@@ -34,19 +34,38 @@ const markedInstance = new Marked(
 );
 
 export function wrapThinkBlocks(html: string): string {
-  if (html.includes('</think>')) {
-    return html.replace(/<\/think>[\s\S]*/gi, '');
-  } else if (html.includes('<think>')) {
-    return html;
+  const tags: Array<'think' | 'analysis'> = ['think', 'analysis'];
+
+  for (const tag of tags) {
+    const openTag = new RegExp(`<${tag}[^>]*>`, 'i');
+    const closeTag = new RegExp(`</${tag}>`, 'i');
+    const block = new RegExp(`<${tag}[^>]*>[\s\S]*?</${tag}>`, 'i');
+
+    if (block.test(html)) {
+      const match = html.match(block);
+      return match ? match[0] : '';
+    }
+
+    // Streaming: opening tag may be present without the closing tag yet.
+    if (openTag.test(html) && !closeTag.test(html)) {
+      const index = html.search(openTag);
+      return index >= 0 ? html.slice(index) : '';
+    }
   }
 
   return '';
 }
 
 function removeThinkBlocks(html: string): string {
-  let result = html.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  let result = html;
 
-  result = result.replace(/<think>[\s\S]*/gi, '');
+  // Remove completed blocks.
+  result = result.replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '');
+  result = result.replace(/<analysis[^>]*>[\s\S]*?<\/analysis>/gi, '');
+
+  // Remove incomplete streaming blocks (opening tag without close yet).
+  result = result.replace(/<think[^>]*>[\s\S]*/gi, '');
+  result = result.replace(/<analysis[^>]*>[\s\S]*/gi, '');
 
   return result;
 }
