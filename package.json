@@ -10,7 +10,7 @@
     "dev:backend": "pnpm --prefix backend start:dev",
     "dev:electron": "pnpm --filter backend build && run-p dev:frontend electron:serve",
     "electron:serve": "electron electron/main.mjs --dev",
-    "build": "run-p build:frontend build:backend build:electron",
+    "build": "run-s build:frontend build:backend build:electron",
     "build:frontend": "vite build",
     "build:backend": "pnpm --prefix backend build",
     "build:electron": "electron-builder",
