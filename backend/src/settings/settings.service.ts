@@ -19,6 +19,15 @@ export class SettingsService {
         settings: DEFAULT_SETTINGS,
       });
       await this.settingsRepository.save(settings);
+      return settings;
+    }
+
+    // Backward-compat: older persisted settings may miss newly introduced keys.
+    // Merge with defaults so GraphQL non-nullable fields are always present.
+    const merged = { ...DEFAULT_SETTINGS, ...(settings.settings as any) };
+    if (JSON.stringify(merged) !== JSON.stringify(settings.settings)) {
+      settings.settings = merged as any;
+      await this.settingsRepository.save(settings);
     }
     return settings;
   }

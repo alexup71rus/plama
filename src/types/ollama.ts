@@ -12,7 +12,10 @@ export interface OllamaModel {
     parameter_size: string;
     quantization_level: string;
   };
+  capabilities?: string[];
 }
+
+export type ThinkMode = false | true | 'low' | 'medium' | 'high';
 
 export interface OllamaTagsResponse {
   models: OllamaModel[];

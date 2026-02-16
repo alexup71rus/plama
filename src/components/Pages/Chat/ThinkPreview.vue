@@ -11,6 +11,21 @@
   const thinkPreviewRef = ref<HTMLElement>();
   const parsedThinkContent = computed(() => parseMarkdown(props.message.content, true));
 
+  const title = computed(() => {
+    const hasTime = props.message.thinkTime !== undefined && props.message.thinkTime !== null;
+    const timeText = hasTime ? ` (${formatThinkTime(props.message.thinkTime ?? 0)})` : '';
+
+    if (props.message.isThinking) {
+      return `Thinking...${timeText}`;
+    }
+
+    if (hasTime) {
+      return `Thought for: ${formatThinkTime(props.message.thinkTime ?? 0)}`;
+    }
+
+    return 'Thoughts';
+  });
+
   watch(() => props.message.content, async () => {
     await nextTick();
     thinkPreviewRef.value?.scrollTo({
@@ -24,9 +39,7 @@
   <div class="think-preview">
     <v-expansion-panels v-model="expandedPanel">
       <v-expansion-panel
-        :title="message.isThinking
-          ? `Thinking... (${formatThinkTime(message.thinkTime ?? 0)})`
-          : `Thought for: ${formatThinkTime(message.thinkTime ?? 0)}`"
+        :title="title"
       >
         <v-expansion-panel-text>
           <v-card variant="tonal" v-html="parsedThinkContent" />
@@ -82,9 +95,5 @@
     overflow: hidden;
     position: relative;
   }
-}
-
-.think-preview + .content {
-  margin-top: 10px;
 }
 </style>

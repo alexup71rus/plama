@@ -26,6 +26,12 @@ export class MessageEntity {
   @Column({ type: 'text', nullable: true })
   attachmentContent?: string;
 
+  @Column({ type: 'float', nullable: true })
+  thinkTime?: number;
+
+  @Column({ type: 'boolean', nullable: true })
+  isThinking?: boolean;
+
   @ManyToOne(() => ChatEntity, (chat) => chat.messages, {
     onDelete: 'CASCADE',
   })

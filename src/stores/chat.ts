@@ -30,7 +30,7 @@ import { useSettingsStore } from '@/stores/settings.ts';
 import { useMemoryStore } from '@/stores/memory.ts';
 import { buildOllamaRequestBody } from '@/utils/messageUtils.ts';
 import { formatFileSize } from '@/utils/chatUtils.ts';
-import { isVisionModel, isThinkingModel } from '@/utils/modelCapabilities.ts';
+import { isVisionModel, isThinkingModel, isThinkingOnlyModel, hasBudgetThinking } from '@/utils/modelCapabilities.ts';
 
 const throttledSaveChat = createThrottledFunction(saveChat, 2000);
 const throttledSaveMessage = createThrottledFunction(saveMessage, 800);
@@ -56,6 +56,7 @@ export const useChatStore = defineStore('chat', {
       isGeneratingTitle: false,
       isSearchActive: settings.isSearchAsDefault,
       isThinkActive: false,
+      thinkLevel: 'medium' as 'low' | 'medium' | 'high',
       isSending: false,
       abortController: null as AbortController | null,
       loading: false,
@@ -73,6 +74,12 @@ export const useChatStore = defineStore('chat', {
     },
     currentModelHasThinking (): boolean {
       return isThinkingModel(this.currentModel);
+    },
+    currentModelIsThinkingOnly (): boolean {
+      return isThinkingOnlyModel(this.currentModel);
+    },
+    currentModelHasBudgetThinking (): boolean {
+      return hasBudgetThinking(this.currentModel);
     },
   },
   actions: {
@@ -537,7 +544,9 @@ export const useChatStore = defineStore('chat', {
           attachmentContent,
           this.memory.getMemoryContent,
           this.settings,
-          this.isThinkActive ? { think: true } : undefined
+          (this.isThinkActive || this.currentModelIsThinkingOnly)
+            ? { think: this.currentModelHasBudgetThinking ? this.thinkLevel : true }
+            : undefined
         );
 
         const requestStartTime = Date.now();
@@ -624,13 +633,76 @@ export const useChatStore = defineStore('chat', {
 
         this.abortController.signal.addEventListener('abort', cleanup);
 
+        let usesThinkingField = false; // true when model sends separate `thinking` field (qwen3 etc.)
+
         await processStream(response, async data => {
+          const thinkingChunk = data.message?.thinking;
           const chunkContent = hasAttachment && attachmentContent?.type === AttachmentType.IMAGE ? data.response : data.message?.content;
+
+          // --- Handle thinking via separate `thinking` field (new Ollama format) ---
+          if (thinkingChunk) {
+            usesThinkingField = true;
+            firstTokenTime ??= Date.now();
+
+            if (!isInThinkBlock) {
+              assistantContent += '<think>';
+              thinkStartTime = Date.now();
+              isInThinkBlock = true;
+              startThinkTimeUpdates();
+            }
+
+            assistantMessageId ??= await this.addMessage(chatId, {
+              role: 'assistant',
+              content: '',
+              isLoading: true,
+              thinkTime: Date.now() - thinkStartTime!,
+              isThinking: true,
+              firstTokenMs: firstTokenTime ? firstTokenTime - requestStartTime : undefined,
+              timestamp: Date.now(),
+            });
+            assistantContent += thinkingChunk;
+
+            const now = Date.now();
+            const outputChars = assistantContent.length;
+            const responseMs = now - requestStartTime;
+            const speedCps = firstTokenTime
+              ? outputChars / Math.max(0.001, (now - firstTokenTime) / 1000)
+              : undefined;
+
+            await this.updateMessage(
+              chatId,
+              assistantMessageId!,
+              assistantContent,
+              true,
+              thinkStartTime ? now - thinkStartTime : undefined,
+              true,
+              {
+                firstTokenMs: firstTokenTime ? firstTokenTime - requestStartTime : undefined,
+                responseMs,
+                outputChars,
+                speedCps,
+              },
+            );
+            return;
+          }
+
+          // --- Handle regular content ---
           if (!chunkContent) return;
 
           firstTokenTime ??= Date.now();
 
-          updateThinkStateFromChunk(chunkContent);
+          // Close thinking block when transitioning from `thinking` field to `content`
+          if (usesThinkingField && isInThinkBlock) {
+            assistantContent += '</think>';
+            isInThinkBlock = false;
+            if (thinkTimeInterval) clearInterval(thinkTimeInterval);
+            thinkTimeInterval = null;
+          }
+
+          // Detect <think>/<analysis> tags in content (legacy format: deepseek-r1, qwq)
+          if (!usesThinkingField) {
+            updateThinkStateFromChunk(chunkContent);
+          }
 
           assistantMessageId ??= await this.addMessage(chatId, {
             role: 'assistant',
@@ -851,12 +923,35 @@ export const useChatStore = defineStore('chat', {
           url: `${this.settings.backendURL}/api/tags`,
         });
         this.models = response.models || [];
+        // Enrich models with capabilities from /api/show (non-blocking)
+        this.enrichModelCapabilities();
         return this.models;
       } catch (error) {
         this.models = [];
         this.error = handleError(error, 'Failed to fetch models');
         return [];
       }
+    },
+
+    async enrichModelCapabilities () {
+      const promises = this.models.map(async model => {
+        try {
+          const res = await fetch(`${this.settings.backendURL}/api/show`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: model.name }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.capabilities)) {
+              model.capabilities = data.capabilities;
+            }
+          }
+        } catch {
+          // Silently ignore — capabilities remain undefined, fallback patterns will be used
+        }
+      });
+      await Promise.allSettled(promises);
     },
   },
 });

@@ -39,7 +39,7 @@ export function buildOllamaRequestBody (
   attachmentContent: Attachment | null | undefined,
   memoryContent: string | null | undefined,
   settings: ISettings,
-  options?: { think?: boolean }
+  options?: { think?: boolean | string }
 ) {
   const hasAttachment = !!(attachmentContent && Object.keys(attachmentContent).length);
 

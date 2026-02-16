@@ -56,6 +56,12 @@ class Message {
 
   @Field({ nullable: true })
   attachmentContent?: string;
+
+  @Field(() => Float, { nullable: true })
+  thinkTime?: number;
+
+  @Field({ nullable: true })
+  isThinking?: boolean;
 }
 
 @ObjectType()
@@ -99,6 +105,8 @@ export class ChatsResolver {
           }
         : undefined,
       attachmentContent: entity.attachmentContent,
+      thinkTime: entity.thinkTime,
+      isThinking: entity.isThinking,
     };
   };
 

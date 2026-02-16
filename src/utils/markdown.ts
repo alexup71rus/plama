@@ -56,6 +56,35 @@ export function wrapThinkBlocks(html: string): string {
   return '';
 }
 
+function extractThinkFromMarkdown(markdown: string): string {
+  const tags: Array<'think' | 'analysis'> = ['think', 'analysis'];
+
+  for (const tag of tags) {
+    const fullBlock = new RegExp(`<${tag}[^>]*>([\s\S]*?)<\/${tag}>`, 'i');
+    const match = markdown.match(fullBlock);
+    if (match) return match[1] ?? '';
+
+    // Streaming/incomplete: opening tag present without closing tag yet.
+    const openTag = new RegExp(`<${tag}[^>]*>`, 'i');
+    const openIndex = markdown.search(openTag);
+    if (openIndex >= 0) {
+      const afterOpen = markdown.slice(openIndex).replace(openTag, '');
+      return afterOpen;
+    }
+  }
+
+  return '';
+}
+
+function stripThinkFromMarkdown(markdown: string): string {
+  let result = markdown;
+  result = result.replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '');
+  result = result.replace(/<analysis[^>]*>[\s\S]*?<\/analysis>/gi, '');
+  result = result.replace(/<think[^>]*>[\s\S]*/gi, '');
+  result = result.replace(/<analysis[^>]*>[\s\S]*/gi, '');
+  return result;
+}
+
 function removeThinkBlocks(html: string): string {
   let result = html;
 
@@ -71,6 +100,13 @@ function removeThinkBlocks(html: string): string {
 }
 
 export function parseMarkdown(markdown: string, isThink = false) {
-  const rawHtml = markedInstance.parse(markdown) as string;
-  return isThink ? wrapThinkBlocks(rawHtml) : removeThinkBlocks(rawHtml);
+  if (isThink) {
+    const extracted = extractThinkFromMarkdown(markdown);
+    if (!extracted) return '';
+    return markedInstance.parse(extracted) as string;
+  }
+
+  const stripped = stripThinkFromMarkdown(markdown);
+  const rawHtml = markedInstance.parse(stripped) as string;
+  return removeThinkBlocks(rawHtml);
 }

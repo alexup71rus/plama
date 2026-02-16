@@ -35,6 +35,12 @@ export class MessageInput {
 
   @Field({ nullable: true })
   attachmentContent?: string;
+
+  @Field(() => Float, { nullable: true })
+  thinkTime?: number;
+
+  @Field({ nullable: true })
+  isThinking?: boolean;
 }
 
 @InputType()

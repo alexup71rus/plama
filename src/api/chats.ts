@@ -86,6 +86,8 @@ export async function loadChatMessages (chatId: string): Promise<Message[]> {
           content
           role
           timestamp
+          thinkTime
+          isThinking
           attachmentMeta {
             type
             name
@@ -97,7 +99,12 @@ export async function loadChatMessages (chatId: string): Promise<Message[]> {
       }
     `;
     const { getChatMessages } = await client.request<{ getChatMessages: Message[] }>(query, { chatId });
-    return getChatMessages || [];
+    const messages = getChatMessages || [];
+    return messages.map(m => ({
+      ...m,
+      thinkTime: (m as any).thinkTime ?? undefined,
+      isThinking: (m as any).isThinking ?? undefined,
+    }));
   } catch (error) {
     handleGraphQLError(error);
     return [];
@@ -123,6 +130,8 @@ export async function saveChat (chat: Chat): Promise<void> {
         content: message.content,
         role: message.role,
         timestamp: message.timestamp,
+        thinkTime: message.thinkTime,
+        isThinking: message.isThinking,
         attachmentMeta: message.attachmentMeta
           ? {
             type: message.attachmentMeta.type,
@@ -323,6 +332,8 @@ export async function saveMessage (chatId: string, message: Message): Promise<vo
       content: message.content,
       role: message.role,
       timestamp: message.timestamp,
+      thinkTime: message.thinkTime,
+      isThinking: message.isThinking,
       attachmentMeta: message.attachmentMeta
         ? {
           type: message.attachmentMeta.type,
@@ -368,6 +379,8 @@ export async function replaceChatMessages (chatId: string, messages: Message[]):
       content: message.content,
       role: message.role,
       timestamp: message.timestamp,
+      thinkTime: message.thinkTime,
+      isThinking: message.isThinking,
       attachmentMeta: message.attachmentMeta
         ? {
           type: message.attachmentMeta.type,

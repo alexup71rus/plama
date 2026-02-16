@@ -1,7 +1,10 @@
 import type { Ref } from 'vue';
 import { onMounted } from 'vue';
 
-export function useCopyCode (bubbleRef: Ref<HTMLElement | undefined>, showSnackbar: (args: { message: string; type: string }) => void) {
+export function useCopyCode (
+  bubbleRef: Ref<HTMLElement | undefined>,
+  showSnackbar: (args: { message: string; type?: 'success' | 'error' | 'info' | 'warning' }) => void
+) {
   onMounted(() => {
     bubbleRef.value?.addEventListener('click', async (ev: MouseEvent) => {
       const target = ev.target as HTMLElement;

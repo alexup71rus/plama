@@ -46,6 +46,27 @@
   const showSendButton = computed(() => settingsStore.settings.showSendButton !== false);
   const hasVision = computed(() => chat.currentModelHasVision);
   const hasThinking = computed(() => chat.currentModelHasThinking);
+  const isThinkingOnly = computed(() => chat.currentModelIsThinkingOnly);
+  const hasBudget = computed(() => chat.currentModelHasBudgetThinking);
+
+  const thinkLabel = computed(() => {
+    if (hasBudget.value) {
+      const labels: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High' };
+      return labels[chat.thinkLevel] || 'Medium';
+    }
+
+    return 'Think';
+  });
+
+  const thinkTooltip = computed(() => {
+    if (hasBudget.value) return `Think: ${thinkLabel.value}`;
+    return chat.isThinkActive ? 'Think: ON' : 'Think: OFF';
+  });
+
+  const setThinkLevel = (level: 'low' | 'medium' | 'high') => {
+    chat.thinkLevel = level;
+    chat.isThinkActive = true;
+  };
   const fileAccept = computed(() =>
     hasVision.value
       ? '.png,.jpg,.jpeg,.txt,.md,.json,.xml,.csv'
@@ -53,7 +74,26 @@
   );
 
   const systemPrompts = computed(() => settingsStore.settings.systemPrompts);
-  const selectedPrompt = ref<SystemPrompt | null>(activeChat.value?.systemPrompt || settingsStore.settings.defaultSystemPrompt);
+
+  const NO_DEFAULT_PROMPT: SystemPrompt = { title: 'No default', content: '' };
+
+  const resolvePromptFromContent = (content: string | null | undefined): SystemPrompt | null => {
+    if (!content) return null;
+
+    // Chats store only the prompt *content* string. Reconstruct the UI object if possible.
+    const match = systemPrompts.value.find(p => p.content === content);
+    if (match) return match;
+
+    if (settingsStore.settings.defaultSystemPrompt?.content === content) {
+      return settingsStore.settings.defaultSystemPrompt;
+    }
+
+    return null;
+  };
+
+  const selectedPrompt = ref<SystemPrompt | null>(
+    resolvePromptFromContent(activeChat.value?.systemPrompt) || settingsStore.settings.defaultSystemPrompt || null
+  );
   const isChatEmpty = computed(() => activeChat.value?.messages.length === 0);
   const isDefaultPrompt = computed(() => (prompt: SystemPrompt | null) => {
     if (!prompt && !settingsStore.settings.defaultSystemPrompt) return true;
@@ -77,7 +117,9 @@
   };
 
   const setDefaultPrompt = (prompt: SystemPrompt | null) => {
-    settingsStore.updateSettings({ defaultSystemPrompt: prompt });
+    // Backend SettingsInput requires a non-null SystemPrompt.
+    // We represent "no default" as an explicit sentinel object.
+    settingsStore.updateSettings({ defaultSystemPrompt: prompt ?? NO_DEFAULT_PROMPT });
   };
 
   const selectPrompt = (prompt: SystemPrompt | null) => {
@@ -109,8 +151,10 @@
 
   const truncateContent = (content: string) => {
     if (!content) return 'No content';
-    const firstLine = content.split('\n')[0];
-    return firstLine.length > 50 ? firstLine.slice(0, 50) + '...' : firstLine + (content.includes('\n') ? '...' : '');
+    const firstLine = content.split('\n')[0] ?? '';
+    return firstLine.length > 50
+      ? firstLine.slice(0, 50) + '...'
+      : firstLine + (content.includes('\n') ? '...' : '');
   };
 
   const handleAttachClick = () => fileInputRef.value?.click();
@@ -199,7 +243,8 @@
 
   onMounted(() => {
     nextTick(() => textareaRef.value?.focus());
-    if (isChatEmpty.value && !activeChat.value?.systemPrompt && settingsStore.settings.defaultSystemPrompt) {
+    const hasDefaultPrompt = !!settingsStore.settings.defaultSystemPrompt?.content?.trim();
+    if (isChatEmpty.value && !activeChat.value?.systemPrompt && hasDefaultPrompt) {
       chat.setSystemPrompt(activeChatId.value, settingsStore.settings.defaultSystemPrompt);
       selectedPrompt.value = settingsStore.settings.defaultSystemPrompt;
       promptSearch.value = selectedPrompt.value?.title || '';
@@ -210,8 +255,8 @@
     nextTick(() => textareaRef.value?.focus());
   }, { deep: true });
 
-  watch(() => activeChat.value?.systemPrompt, newPrompt => {
-    selectedPrompt.value = newPrompt || settingsStore.settings.defaultSystemPrompt;
+  watch(() => activeChat.value?.systemPrompt, (newPrompt) => {
+    selectedPrompt.value = resolvePromptFromContent(newPrompt) || settingsStore.settings.defaultSystemPrompt || null;
     promptSearch.value = selectedPrompt.value?.title || '';
   }, { deep: true });
 </script>
@@ -363,19 +408,32 @@
       <v-spacer />
       <v-menu :close-on-content-click="false" location="top">
         <template #activator="{ props }">
+          <!-- NOTE: We intentionally render two separate v-btn variants (label vs icon).
+               In Vuetify, conditionally passing undefined/empty icon props can still behave
+               like "present" attributes and affects sizing/icon rendering. -->
           <v-btn
-            v-tooltip:top="showLabels ? undefined : 'RAG Files'"
+            v-if="showLabels"
             v-bind="props"
-            :append-icon="showLabels ? 'mdi-chevron-down' : undefined"
             class="rag-btn"
-            :color="isChangedRag ? 'primary' : 'white'"
+            :color="isChangedRag ? 'primary' : undefined"
             :disabled="!chat.models?.length"
-            :icon="!showLabels ? 'mdi-file-document' : undefined"
-            :prepend-icon="showLabels ? 'mdi-file-document' : undefined"
+            prepend-icon="mdi-file-document"
+            append-icon="mdi-chevron-down"
             variant="tonal"
           >
-            <span v-if="showLabels">RAG Files</span>
+            RAG Files
           </v-btn>
+          <v-btn
+            v-else
+            v-tooltip:top="'RAG Files'"
+            v-bind="props"
+            class="rag-btn"
+            :color="isChangedRag ? 'primary' : undefined"
+            :disabled="!chat.models?.length"
+            icon="mdi-file-document"
+            size="small"
+            variant="tonal"
+          />
         </template>
         <v-card min-width="300">
           <v-card-text class="pa-2">
@@ -427,20 +485,29 @@
           </v-card-text>
         </v-card>
       </v-menu>
+      <!-- Attach: icon-only button when labels are hidden AND no file selected; otherwise it expands to show filename -->
       <v-btn
+        v-if="!showLabels && !attachment"
+        v-tooltip:top="hasVision ? 'Attach' : 'Attach (text only)'"
+        class="file-btn"
+        :disabled="!chat.models?.length"
+        icon="mdi-paperclip"
+        size="small"
+        variant="tonal"
+        @click="handleAttachClick"
+      />
+      <v-btn
+        v-else
         v-tooltip:top="!showLabels ? (attachment ? attachment.name : (hasVision ? 'Attach' : 'Attach (text only)')) : (hasVision ? undefined : 'Images not supported by this model')"
         class="file-btn"
-        :color="attachment ? 'blue' : 'white'"
+        :color="attachment ? 'blue' : undefined"
         :disabled="!chat.models?.length"
-        :icon="!showLabels && !attachment ? 'mdi-paperclip' : undefined"
+        prepend-icon="mdi-paperclip"
         variant="tonal"
         @click="handleAttachClick"
       >
-        <template v-if="showLabels || attachment" #prepend>
-          <v-icon>mdi-paperclip</v-icon>
-        </template>
-        <span v-if="showLabels && attachment" v-tooltip:top="attachment.name">{{ attachment.name }}</span>
-        <span v-else-if="showLabels">Attach</span>
+        <span v-if="attachment" v-tooltip:top="attachment.name">{{ attachment.name }}</span>
+        <span v-else>Attach</span>
         <v-btn
           v-if="attachment"
           icon="mdi-close"
@@ -449,31 +516,81 @@
           @click.stop="removeAttachment"
         />
       </v-btn>
+      <!-- Think button: simple toggle for non-budget, dropdown for budget thinking -->
+      <template v-if="hasThinking">
+        <!-- Non-budget thinking: simple toggle button -->
+        <v-btn
+          v-if="!hasBudget && showLabels"
+          class="think-btn"
+          :color="(chat.isThinkActive || isThinkingOnly) ? 'purple' : undefined"
+          :disabled="!chat.models?.length || isThinkingOnly"
+          prepend-icon="mdi-head-lightbulb"
+          variant="tonal"
+          @click="!isThinkingOnly && (chat.isThinkActive = !chat.isThinkActive)"
+        >
+          Think
+        </v-btn>
+        <v-btn
+          v-else-if="!hasBudget"
+          v-tooltip:top="thinkTooltip"
+          class="think-btn"
+          :color="(chat.isThinkActive || isThinkingOnly) ? 'purple' : undefined"
+          :disabled="!chat.models?.length || isThinkingOnly"
+          icon="mdi-head-lightbulb"
+          size="small"
+          variant="tonal"
+          @click="!isThinkingOnly && (chat.isThinkActive = !chat.isThinkActive)"
+        />
+
+        <!-- Budget thinking: single button that opens a menu (labels always shown as selected value) -->
+        <v-menu v-else location="top">
+          <template #activator="{ props }">
+            <v-btn
+              v-bind="props"
+              class="think-btn"
+              :color="(chat.isThinkActive || isThinkingOnly) ? 'purple' : 'white'"
+              :disabled="!chat.models?.length"
+              prepend-icon="mdi-head-lightbulb"
+              append-icon="mdi-chevron-down"
+              variant="tonal"
+            >
+              {{ thinkLabel }}
+            </v-btn>
+          </template>
+          <v-list density="compact">
+            <v-list-item
+              v-for="level in (['low', 'medium', 'high'] as const)"
+              :key="level"
+              :active="chat.isThinkActive && chat.thinkLevel === level"
+              @click="setThinkLevel(level)"
+            >
+              <v-list-item-title>{{ level.charAt(0).toUpperCase() + level.slice(1) }}</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-menu>
+      </template>
       <v-btn
-        v-if="hasThinking"
-        v-tooltip:top="!showLabels ? (chat.isThinkActive ? 'Think: ON' : 'Think: OFF') : undefined"
-        class="think-btn"
-        :color="chat.isThinkActive ? 'purple' : 'white'"
-        :disabled="!chat.models?.length"
-        :icon="!showLabels ? 'mdi-head-lightbulb' : undefined"
-        :prepend-icon="showLabels ? 'mdi-head-lightbulb' : undefined"
-        variant="tonal"
-        @click="chat.isThinkActive = !chat.isThinkActive"
-      >
-        <span v-if="showLabels">Think</span>
-      </v-btn>
-      <v-btn
-        v-tooltip:top="!showLabels ? 'Search' : undefined"
+        v-if="showLabels"
         class="search-btn"
-        :color="chat.isSearchActive ? 'blue' : 'white'"
+        :color="chat.isSearchActive ? 'blue' : undefined"
         :disabled="!chat.models?.length"
-        :icon="!showLabels ? 'mdi-magnify' : undefined"
-        :prepend-icon="showLabels ? 'mdi-magnify' : undefined"
+        prepend-icon="mdi-magnify"
         variant="tonal"
         @click="chat.isSearchActive = !chat.isSearchActive"
       >
-        <span v-if="showLabels">Search</span>
+        Search
       </v-btn>
+      <v-btn
+        v-else
+        v-tooltip:top="'Search'"
+        class="search-btn"
+        :color="chat.isSearchActive ? 'blue' : undefined"
+        :disabled="!chat.models?.length"
+        icon="mdi-magnify"
+        size="small"
+        variant="tonal"
+        @click="chat.isSearchActive = !chat.isSearchActive"
+      />
       <v-btn
         v-if="showSendButton"
         class="send-btn"
@@ -632,6 +749,11 @@
       transform: translate(-50%, -50%);
     }
   }
+}
+
+.think-btn.v-btn--disabled {
+  opacity: 1;
+  filter: grayscale(.4);
 }
 
 ::v-deep(.model-btn, .rag-btn) {

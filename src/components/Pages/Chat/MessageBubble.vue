@@ -194,6 +194,16 @@ const props = defineProps<{
     if (props.message.responseMs !== undefined) parts.push(`Total: ${formatSeconds(props.message.responseMs)}s`);
     return parts.join(' · ');
   });
+
+  const hasThinkBlock = computed(() => {
+    if (props.message.role !== 'assistant') return false;
+    return /^\s*<(think|analysis)\b/i.test(props.message.content);
+  });
+
+  const shouldShowThinkPreview = computed(() => {
+    if (props.message.role !== 'assistant') return false;
+    return props.message.thinkTime != null || props.message.isThinking === true || hasThinkBlock.value;
+  });
 </script>
 
 <template>
@@ -203,7 +213,7 @@ const props = defineProps<{
       :content="message.attachmentContent || ''"
       :meta="message.attachmentMeta"
     />
-    <ThinkPreview v-if="message.thinkTime !== undefined" :message="message" />
+    <ThinkPreview v-if="shouldShowThinkPreview" :message="message" />
     <div class="content" v-html="parsedContent" />
     <div v-if="false" class="attachments-scroll">
       <div class="attachment" />

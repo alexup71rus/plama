@@ -131,6 +131,12 @@ export class Settings {
 
   @Field(() => [String])
   selectedRagFiles: string[];
+
+  @Field()
+  showToolbarLabels: boolean;
+
+  @Field()
+  showSendButton: boolean;
 }
 
 @InputType()
@@ -212,4 +218,10 @@ export class SettingsInput {
 
   @Field(() => [String])
   selectedRagFiles: string[];
+
+  @Field()
+  showToolbarLabels: boolean;
+
+  @Field()
+  showSendButton: boolean;
 }

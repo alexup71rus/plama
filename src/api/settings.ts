@@ -21,6 +21,8 @@ export async function loadSettings(): Promise<ISettings | null> {
           theme
           isSearchAsDefault
           chatScrollMode
+          showToolbarLabels
+          showSendButton
           systemPrompts {
             title
             content
