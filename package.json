@@ -105,7 +105,8 @@
     },
     "asar": false,
     "mac": {
-      "icon": "electron/logo.icns"
+      "icon": "electron/logo.icns",
+      "identity": null
     },
     "win": {
       "icon": "electron/logo.ico"
