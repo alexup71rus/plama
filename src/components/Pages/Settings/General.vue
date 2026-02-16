@@ -19,6 +19,8 @@
     systemPrompts: [...settingsStore.settings.systemPrompts],
     defaultSystemPrompt: settingsStore.settings.defaultSystemPrompt,
     maxMessages: settingsStore.settings.maxMessages,
+    showToolbarLabels: settingsStore.settings.showToolbarLabels !== false,
+    showSendButton: settingsStore.settings.showSendButton !== false,
   });
 
   const newPrompt = ref('');
@@ -77,6 +79,8 @@
       systemPrompts: [...DEFAULT_SETTINGS.systemPrompts],
       defaultSystemPrompt: DEFAULT_SETTINGS.defaultSystemPrompt,
       maxMessages: DEFAULT_SETTINGS.maxMessages,
+      showToolbarLabels: DEFAULT_SETTINGS.showToolbarLabels,
+      showSendButton: DEFAULT_SETTINGS.showSendButton,
     };
     settingsStore.resetSettings();
     showSnackbar({ message: 'General settings reset', type: 'success' });
@@ -231,6 +235,23 @@
         variant="solo-filled"
       />
     </v-form>
+
+    <v-divider class="my-6" />
+    <h3 class="section-subtitle">Toolbar</h3>
+    <v-switch
+      v-model="formSettings.showToolbarLabels"
+      class="mb-2"
+      color="primary"
+      hide-details
+      label="Show button labels"
+    />
+    <v-switch
+      v-model="formSettings.showSendButton"
+      class="mb-4"
+      color="primary"
+      hide-details
+      label="Show send button"
+    />
 
     <v-divider class="my-6" />
     <h3 class="section-subtitle">System Prompts</h3>

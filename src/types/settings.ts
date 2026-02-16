@@ -56,6 +56,8 @@ export const DEFAULT_SETTINGS = {
   embeddingsModel: '' as string,
   ragFiles: [] as string[],
   selectedRagFiles: [] as string[],
+  showToolbarLabels: true as boolean,
+  showSendButton: true as boolean,
 };
 
 export type ISettings = {

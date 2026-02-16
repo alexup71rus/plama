@@ -7,11 +7,19 @@ export interface AttachmentContent {
   meta: AttachmentMeta;
 }
 
-export async function processFile (file: File): Promise<AttachmentContent | null> {
+export async function processFile (file: File, visionEnabled: boolean = true): Promise<AttachmentContent | null> {
   const { showSnackbar } = useAlert();
 
   const isImage = file.type.startsWith('image/') && /\.(png|jpe?g)$/i.test(file.name);
   const isText = file.type.startsWith('text/') || /\.(txt|md|json|xml|csv)$/i.test(file.name);
+
+  if (isImage && !visionEnabled) {
+    showSnackbar({
+      message: 'Current model does not support images. Select a vision model (e.g. llava, llama3.2-vision).',
+      type: 'error',
+    });
+    return null;
+  }
 
   if (!isImage && !isText) {
     showSnackbar({

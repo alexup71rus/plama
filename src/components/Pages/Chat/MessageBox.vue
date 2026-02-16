@@ -42,6 +42,16 @@
       : ragFiles.value
   );
 
+  const showLabels = computed(() => settingsStore.settings.showToolbarLabels !== false);
+  const showSendButton = computed(() => settingsStore.settings.showSendButton !== false);
+  const hasVision = computed(() => chat.currentModelHasVision);
+  const hasThinking = computed(() => chat.currentModelHasThinking);
+  const fileAccept = computed(() =>
+    hasVision.value
+      ? '.png,.jpg,.jpeg,.txt,.md,.json,.xml,.csv'
+      : '.txt,.md,.json,.xml,.csv'
+  );
+
   const systemPrompts = computed(() => settingsStore.settings.systemPrompts);
   const selectedPrompt = ref<SystemPrompt | null>(activeChat.value?.systemPrompt || settingsStore.settings.defaultSystemPrompt);
   const isChatEmpty = computed(() => activeChat.value?.messages.length === 0);
@@ -110,7 +120,7 @@
     const file = input.files?.[0];
     if (!file) return;
 
-    const result = await processFile(file);
+    const result = await processFile(file, hasVision.value);
     if (result) {
       attachmentContent.value = result;
       attachment.value = file;
@@ -210,6 +220,7 @@
   <div class="chat-input-wrapper">
     <input
       ref="fileInputRef"
+      :accept="fileAccept"
       hidden
       type="file"
       @change="handleFilesSelected"
@@ -353,14 +364,17 @@
       <v-menu :close-on-content-click="false" location="top">
         <template #activator="{ props }">
           <v-btn
+            v-tooltip:top="showLabels ? undefined : 'RAG Files'"
             v-bind="props"
-            append-icon="mdi-chevron-down"
+            :append-icon="showLabels ? 'mdi-chevron-down' : undefined"
             class="rag-btn"
             :color="isChangedRag ? 'primary' : 'white'"
-            prepend-icon="mdi-file-document"
+            :disabled="!chat.models?.length"
+            :icon="!showLabels ? 'mdi-file-document' : undefined"
+            :prepend-icon="showLabels ? 'mdi-file-document' : undefined"
             variant="tonal"
           >
-            RAG Files
+            <span v-if="showLabels">RAG Files</span>
           </v-btn>
         </template>
         <v-card min-width="300">
@@ -414,17 +428,19 @@
         </v-card>
       </v-menu>
       <v-btn
+        v-tooltip:top="!showLabels ? (attachment ? attachment.name : (hasVision ? 'Attach' : 'Attach (text only)')) : (hasVision ? undefined : 'Images not supported by this model')"
         class="file-btn"
         :color="attachment ? 'blue' : 'white'"
         :disabled="!chat.models?.length"
+        :icon="!showLabels && !attachment ? 'mdi-paperclip' : undefined"
         variant="tonal"
         @click="handleAttachClick"
       >
-        <template #prepend>
+        <template v-if="showLabels || attachment" #prepend>
           <v-icon>mdi-paperclip</v-icon>
         </template>
-        <span v-if="attachment" v-tooltip:top="attachment.name">{{ attachment.name }}</span>
-        <span v-else>Attach</span>
+        <span v-if="showLabels && attachment" v-tooltip:top="attachment.name">{{ attachment.name }}</span>
+        <span v-else-if="showLabels">Attach</span>
         <v-btn
           v-if="attachment"
           icon="mdi-close"
@@ -434,16 +450,32 @@
         />
       </v-btn>
       <v-btn
+        v-if="hasThinking"
+        v-tooltip:top="!showLabels ? (chat.isThinkActive ? 'Think: ON' : 'Think: OFF') : undefined"
+        class="think-btn"
+        :color="chat.isThinkActive ? 'purple' : 'white'"
+        :disabled="!chat.models?.length"
+        :icon="!showLabels ? 'mdi-head-lightbulb' : undefined"
+        :prepend-icon="showLabels ? 'mdi-head-lightbulb' : undefined"
+        variant="tonal"
+        @click="chat.isThinkActive = !chat.isThinkActive"
+      >
+        <span v-if="showLabels">Think</span>
+      </v-btn>
+      <v-btn
+        v-tooltip:top="!showLabels ? 'Search' : undefined"
         class="search-btn"
         :color="chat.isSearchActive ? 'blue' : 'white'"
         :disabled="!chat.models?.length"
-        prepend-icon="mdi-magnify"
+        :icon="!showLabels ? 'mdi-magnify' : undefined"
+        :prepend-icon="showLabels ? 'mdi-magnify' : undefined"
         variant="tonal"
         @click="chat.isSearchActive = !chat.isSearchActive"
       >
-        Search
+        <span v-if="showLabels">Search</span>
       </v-btn>
       <v-btn
+        v-if="showSendButton"
         class="send-btn"
         :color="chat.isSending ? 'error' : undefined"
         :disabled="chat.isSending || chat.models?.length ? false : !canSend"

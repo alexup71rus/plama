@@ -16,7 +16,7 @@ import {
   waitForBackend,
 } from '@/api/chats';
 import { type OllamaModel, type OllamaTagsResponse } from '@/types/ollama.ts';
-import { type Attachment, AttachmentType, type Chat, type ChatMeta, type Message } from '@/types/chats.ts';
+import { type Attachment, AttachmentType, type Chat, type ChatMeta, type Message, type SearchResultItem } from '@/types/chats.ts';
 import {
   createThrottledFunction,
   extractLinks,
@@ -28,9 +28,9 @@ import {
 import { type ISettings, type SystemPrompt } from '../types/settings.ts';
 import { useSettingsStore } from '@/stores/settings.ts';
 import { useMemoryStore } from '@/stores/memory.ts';
-import type { SearchResultItem } from '../../backend/src/search/search.service.ts';
 import { buildOllamaRequestBody } from '@/utils/messageUtils.ts';
 import { formatFileSize } from '@/utils/chatUtils.ts';
+import { isVisionModel, isThinkingModel } from '@/utils/modelCapabilities.ts';
 
 const throttledSaveChat = createThrottledFunction(saveChat, 2000);
 const throttledSaveMessage = createThrottledFunction(saveMessage, 800);
@@ -55,6 +55,7 @@ export const useChatStore = defineStore('chat', {
       activeChat: null as Chat | null,
       isGeneratingTitle: false,
       isSearchActive: settings.isSearchAsDefault,
+      isThinkActive: false,
       isSending: false,
       abortController: null as AbortController | null,
       loading: false,
@@ -63,6 +64,16 @@ export const useChatStore = defineStore('chat', {
   },
   getters: {
     selectedModel: state => state.settings.selectedModel || state.settings.systemModel || state.models[0]?.name || '',
+    currentModel (): OllamaModel | undefined {
+      const name = this.selectedModel;
+      return this.models.find(m => m.name === name);
+    },
+    currentModelHasVision (): boolean {
+      return isVisionModel(this.currentModel);
+    },
+    currentModelHasThinking (): boolean {
+      return isThinkingModel(this.currentModel);
+    },
   },
   actions: {
     async syncActiveChat () {
@@ -275,7 +286,15 @@ export const useChatStore = defineStore('chat', {
       return newMessage.id;
     },
 
-    async updateMessage (chatId: string, messageId: string, content: string, isLoading?: boolean, thinkTime?: number, isThinking?: boolean) {
+    async updateMessage (
+      chatId: string,
+      messageId: string,
+      content: string,
+      isLoading?: boolean,
+      thinkTime?: number,
+      isThinking?: boolean,
+      extra?: Partial<Pick<Message, 'firstTokenMs' | 'responseMs' | 'outputChars' | 'speedCps'>>,
+    ) {
       const chat = findById(this.chats, chatId);
       const message = chat?.messages.find(m => m.id === messageId);
       if (message) {
@@ -283,6 +302,10 @@ export const useChatStore = defineStore('chat', {
         if (isLoading !== undefined) message.isLoading = isLoading;
         if (thinkTime !== undefined) message.thinkTime = thinkTime;
         if (isThinking !== undefined) message.isThinking = isThinking;
+        if (extra?.firstTokenMs !== undefined) message.firstTokenMs = extra.firstTokenMs;
+        if (extra?.responseMs !== undefined) message.responseMs = extra.responseMs;
+        if (extra?.outputChars !== undefined) message.outputChars = extra.outputChars;
+        if (extra?.speedCps !== undefined) message.speedCps = extra.speedCps;
         await this.persistMessage(chatId, message);
         await this.syncActiveChat();
       }
@@ -513,8 +536,11 @@ export const useChatStore = defineStore('chat', {
           finalContentForModel,
           attachmentContent,
           this.memory.getMemoryContent,
-          this.settings
+          this.settings,
+          this.isThinkActive ? { think: true } : undefined
         );
+
+        const requestStartTime = Date.now();
 
         const response = await fetch(`${this.settings.backendURL}/api/${hasAttachment && attachmentContent?.type === AttachmentType.IMAGE ? 'generate' : 'chat'}`, {
           method: 'POST',
@@ -530,7 +556,8 @@ export const useChatStore = defineStore('chat', {
         let thinkTagBuffer = '';
         let assistantMessageId: string | null = null;
         let assistantContent = '';
-        let thinkTimeInterval: number | null = null;
+        let thinkTimeInterval: ReturnType<typeof setInterval> | null = null;
+        let firstTokenTime: number | null = null;
 
         const THINK_OPEN_TAGS = ['<think>', '<analysis>'];
         const THINK_CLOSE_TAGS = ['</think>', '</analysis>'];
@@ -557,7 +584,14 @@ export const useChatStore = defineStore('chat', {
           if (thinkTimeInterval) clearInterval(thinkTimeInterval);
           thinkTimeInterval = setInterval(async () => {
             if (isInThinkBlock && thinkStartTime && assistantMessageId) {
-              await this.updateMessage(chatId, assistantMessageId, assistantContent, true, Date.now() - thinkStartTime, true);
+              await this.updateMessage(
+                chatId,
+                assistantMessageId,
+                assistantContent,
+                true,
+                Date.now() - thinkStartTime,
+                true,
+              );
             }
           }, 100);
         };
@@ -565,7 +599,26 @@ export const useChatStore = defineStore('chat', {
         const cleanup = () => {
           if (thinkTimeInterval) clearInterval(thinkTimeInterval);
           if (assistantMessageId && isInThinkBlock) {
-            this.updateMessage(chatId, assistantMessageId, assistantContent, false, thinkStartTime ? Date.now() - thinkStartTime : undefined, false);
+            const now = Date.now();
+            const outputChars = assistantContent.length;
+            const responseMs = now - requestStartTime;
+            const speedCps = firstTokenTime
+              ? outputChars / Math.max(0.001, (now - firstTokenTime) / 1000)
+              : undefined;
+            this.updateMessage(
+              chatId,
+              assistantMessageId,
+              assistantContent,
+              false,
+              thinkStartTime ? now - thinkStartTime : undefined,
+              false,
+              {
+                firstTokenMs: firstTokenTime ? firstTokenTime - requestStartTime : undefined,
+                responseMs,
+                outputChars,
+                speedCps,
+              },
+            );
           }
         };
 
@@ -575,6 +628,8 @@ export const useChatStore = defineStore('chat', {
           const chunkContent = hasAttachment && attachmentContent?.type === AttachmentType.IMAGE ? data.response : data.message?.content;
           if (!chunkContent) return;
 
+          firstTokenTime ??= Date.now();
+
           updateThinkStateFromChunk(chunkContent);
 
           assistantMessageId ??= await this.addMessage(chatId, {
@@ -583,16 +638,51 @@ export const useChatStore = defineStore('chat', {
             isLoading: true,
             thinkTime: thinkStartTime && isInThinkBlock ? Date.now() - thinkStartTime : undefined,
             isThinking: isInThinkBlock,
+            firstTokenMs: firstTokenTime ? firstTokenTime - requestStartTime : undefined,
             timestamp: Date.now(),
           });
           assistantContent += chunkContent;
-          await this.updateMessage(chatId, assistantMessageId!, assistantContent, true, thinkTimeInterval && isInThinkBlock ? Date.now() - thinkStartTime : undefined, isInThinkBlock);
+
+          const now = Date.now();
+          const outputChars = assistantContent.length;
+          const responseMs = now - requestStartTime;
+          const speedCps = firstTokenTime
+            ? outputChars / Math.max(0.001, (now - firstTokenTime) / 1000)
+            : undefined;
+
+          await this.updateMessage(
+            chatId,
+            assistantMessageId!,
+            assistantContent,
+            true,
+            thinkTimeInterval && isInThinkBlock && thinkStartTime ? now - thinkStartTime : undefined,
+            isInThinkBlock,
+            {
+              firstTokenMs: firstTokenTime ? firstTokenTime - requestStartTime : undefined,
+              responseMs,
+              outputChars,
+              speedCps,
+            },
+          );
         });
 
         if (assistantMessageId) {
           const finalThinkTime = isInThinkBlock && thinkStartTime ? Date.now() - thinkStartTime : findById(chat.messages, assistantMessageId)?.thinkTime;
           if (thinkTimeInterval) clearInterval(thinkTimeInterval);
-          await this.updateMessage(chatId, assistantMessageId, assistantContent, false, finalThinkTime, false);
+
+          const now = Date.now();
+          const outputChars = assistantContent.length;
+          const responseMs = now - requestStartTime;
+          const speedCps = firstTokenTime
+            ? outputChars / Math.max(0.001, (now - firstTokenTime) / 1000)
+            : undefined;
+
+          await this.updateMessage(chatId, assistantMessageId, assistantContent, false, finalThinkTime, false, {
+            firstTokenMs: firstTokenTime ? firstTokenTime - requestStartTime : undefined,
+            responseMs,
+            outputChars,
+            speedCps,
+          });
           await this.persistChatMessages(chatId);
           await this.syncActiveChat();
         }
@@ -631,6 +721,10 @@ export const useChatStore = defineStore('chat', {
         }
 
         const message = chat.messages[index];
+        if (!message) {
+          this.error = 'Message not found';
+          return;
+        }
         if (message.role !== 'user') {
           this.error = 'Cannot edit non-user message';
           return;
@@ -709,16 +803,18 @@ export const useChatStore = defineStore('chat', {
 
       try {
         const index = chat.messages.findIndex(m => m.id === messageId);
-        if (index === -1 || chat.messages[index].role !== 'assistant') {
+        const assistantMessage = chat.messages[index];
+        if (index === -1 || !assistantMessage || assistantMessage.role !== 'assistant') {
           this.error = 'Assistant message not found';
           return;
         }
-        if (index === 0 || chat.messages[index - 1].role !== 'user') {
+        const prev = chat.messages[index - 1];
+        if (index === 0 || !prev || prev.role !== 'user') {
           this.error = 'No preceding user message found';
           return;
         }
 
-        const prevMessage = chat.messages[index - 1];
+        const prevMessage = prev;
         const cachedContent = prevMessage.content;
         const cachedAttachmentMeta = prevMessage.attachmentMeta;
         const cachedAttachmentContent = prevMessage.attachmentContent;

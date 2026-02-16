@@ -1,14 +1,45 @@
 import { type Attachment, AttachmentType } from '@/types/chats.ts';
 import type { ISettings } from '@/types/settings.ts';
 
+type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+function stripInternalContextBlocks(content: string): string {
+  if (!content) return '';
+  // Remove UI-only internal context blocks we store in the user message for display.
+  // They are not meant to be sent back to the model as part of history.
+  return content
+    .replace(
+      /<details\s+class="internal-context"[^>]*>[\s\S]*?<\/details>/gi,
+      '',
+    )
+    .trim();
+}
+
+function mergeConsecutiveRoles(messages: ChatMessage[]): ChatMessage[] {
+  const merged: ChatMessage[] = [];
+  for (const msg of messages) {
+    const content = msg.content ?? '';
+    if (!content.trim()) continue;
+
+    const prev = merged[merged.length - 1];
+    if (prev && prev.role === msg.role) {
+      prev.content = [prev.content, content].filter(Boolean).join('\n\n');
+    } else {
+      merged.push({ role: msg.role, content });
+    }
+  }
+  return merged;
+}
+
 export function buildOllamaRequestBody (
-  chat: { systemPrompt?: { content: string } | null; messages: any[] },
+  chat: { systemPrompt?: { content: string } | string | null; messages: any[] },
   selectedModel: string,
   userMessageId: string,
   finalContent: string,
   attachmentContent: Attachment | null | undefined,
   memoryContent: string | null | undefined,
-  settings: ISettings
+  settings: ISettings,
+  options?: { think?: boolean }
 ) {
   const hasAttachment = !!(attachmentContent && Object.keys(attachmentContent).length);
 
@@ -25,7 +56,10 @@ export function buildOllamaRequestBody (
   }
 
   const maxMessages = settings.maxMessages || 20;
-  const reservedSlots = (chat.systemPrompt?.content || memoryContent ? 1 : 0) + 1;
+  const systemPromptContent =
+    typeof chat.systemPrompt === 'string' ? chat.systemPrompt : chat.systemPrompt?.content;
+
+  const reservedSlots = (systemPromptContent || memoryContent ? 1 : 0) + 1;
   const availableSlots = Math.max(0, maxMessages - reservedSlots);
 
   if (hasAttachment && attachmentContent!.type === AttachmentType.IMAGE) {
@@ -36,18 +70,19 @@ export function buildOllamaRequestBody (
       body: {
         model: selectedModel,
         prompt: [
-          chat.systemPrompt?.content,
+          systemPromptContent,
           memoryContent,
           finalContent,
         ].filter(Boolean).join('\n'),
         images: [attachmentContent!.content],
         stream: true,
+        ...(options?.think !== undefined ? { think: options.think } : {}),
       },
       images: [attachmentContent!.content],
     };
   }
 
-  const systemContent = [chat.systemPrompt?.content, memoryContent].filter(Boolean).join('\n');
+  const systemContent = [systemPromptContent, memoryContent].filter(Boolean).join('\n');
 
   const messages: any[] = [];
   if (systemContent) {
@@ -64,7 +99,7 @@ export function buildOllamaRequestBody (
     .slice(-availableSlots)
     .map(msg => ({
       role: msg.role,
-      content: msg.content,
+      content: stripInternalContextBlocks(msg.content),
     }));
 
   messages.push(...filteredMessages);
@@ -73,11 +108,14 @@ export function buildOllamaRequestBody (
     content: finalContent || '',
   });
 
+  const normalized = mergeConsecutiveRoles(messages as ChatMessage[]);
+
   return {
     body: {
       model: selectedModel,
-      messages,
+      messages: normalized,
       stream: true,
+      ...(options?.think !== undefined ? { think: options.think } : {}),
     },
     images: undefined,
   };

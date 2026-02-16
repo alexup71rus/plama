@@ -170,6 +170,30 @@ const props = defineProps<{
       isSummaryLoading.value = false;
     }
   };
+
+  const formatSeconds = (ms?: number) => {
+    if (ms === undefined || ms === null) return '';
+    const seconds = ms / 1000;
+    return seconds < 10 ? seconds.toFixed(1) : Math.round(seconds).toString();
+  };
+
+  const speedText = computed(() => {
+    if (props.message.role !== 'assistant') return '';
+    if (props.message.responseMs === undefined) return '';
+    if (props.message.speedCps === undefined || !Number.isFinite(props.message.speedCps)) {
+      return `⏱ ${formatSeconds(props.message.responseMs)}s`;
+    }
+    return `⏱ ${formatSeconds(props.message.responseMs)}s · ${Math.round(props.message.speedCps)} chars/s`;
+  });
+
+  const speedTitle = computed(() => {
+    if (props.message.role !== 'assistant') return '';
+    const parts: string[] = [];
+    if (props.message.firstTokenMs !== undefined) parts.push(`First token: ${formatSeconds(props.message.firstTokenMs)}s`);
+    if (props.message.outputChars !== undefined) parts.push(`Output: ${props.message.outputChars} chars`);
+    if (props.message.responseMs !== undefined) parts.push(`Total: ${formatSeconds(props.message.responseMs)}s`);
+    return parts.join(' · ');
+  });
 </script>
 
 <template>
@@ -199,18 +223,21 @@ const props = defineProps<{
       @click="deleteMessage"
     />
   </div>
-  <div v-else :class="['actions', { disabled: message.isLoading }]">
-    <v-btn icon="mdi-pencil" size="small" variant="text" @click="openEditDialog" />
-    <v-btn icon="mdi-autorenew" size="small" variant="text" @click="regenerateMessage" />
-    <v-btn icon="mdi-content-copy" size="small" variant="text" @click="copyToClipboard(message.content)" />
-    <v-btn
-      :disabled="isSummaryLoading"
-      icon="mdi-content-save"
-      :loading="isSummaryLoading"
-      size="small"
-      variant="text"
-      @click="saveSummary"
-    />
+  <div v-else :class="['actions', 'actions--assistant', { disabled: message.isLoading }]">
+    <div class="actions__buttons">
+      <v-btn icon="mdi-pencil" size="small" variant="text" @click="openEditDialog" />
+      <v-btn icon="mdi-autorenew" size="small" variant="text" @click="regenerateMessage" />
+      <v-btn icon="mdi-content-copy" size="small" variant="text" @click="copyToClipboard(message.content)" />
+      <v-btn
+        :disabled="isSummaryLoading"
+        icon="mdi-content-save"
+        :loading="isSummaryLoading"
+        size="small"
+        variant="text"
+        @click="saveSummary"
+      />
+    </div>
+    <div v-if="speedText" class="actions__stats" :title="speedTitle">{{ speedText }}</div>
   </div>
 
   <v-dialog v-model="isEditDialogOpen" max-width="800px">
@@ -322,6 +349,26 @@ const props = defineProps<{
 .actions {
   &--user {
     text-align: right;
+  }
+
+  &--assistant {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .actions__buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .actions__stats {
+    margin-left: auto;
+    font-size: 12px;
+    opacity: 0.55;
+    white-space: nowrap;
+    user-select: none;
   }
 
   &.disabled {

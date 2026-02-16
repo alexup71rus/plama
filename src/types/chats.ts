@@ -33,6 +33,10 @@ export interface Message {
   isLoading?: boolean;
   thinkTime?: number;
   isThinking?: boolean;
+  firstTokenMs?: number;
+  responseMs?: number;
+  outputChars?: number;
+  speedCps?: number;
 }
 
 export interface Chat {
